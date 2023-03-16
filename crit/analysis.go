@@ -92,7 +92,7 @@ func GetMountPoints(dir string) (mnts []MountPoint, err error) {
 	panic("not implemented yet")
 }
 
-// Attempt to read retreive memory segment of a process
+// Attempt to retreive memory segment of a process
 func GetMemPages(dir string, pid, start, end uint64) (pages []byte, err error) {
 	// Get physical memory addresses
 	pagemapImg, err := getImg(filepath.Join(dir, fmt.Sprintf("pagemap-%d.img", pid)))
