@@ -25,6 +25,9 @@ type Process struct {
 	Children []*PsTree           `json:"children,omitempty"`
 }
 
+// The "dir" argument present in functions below is the path to 
+// the "checkpoint/" director where the container checkpoint is extracted.
+
 // This function will return the process tree from the specified pid.
 // Will return the entire process tree if pid is 0
 // NOTE: Is this function needed since it will do pretty much the same thing like crit.ExplorePs().
