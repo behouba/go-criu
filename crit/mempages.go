@@ -18,8 +18,40 @@ const (
 	vmaAreaVsyscall = 1 << 2  // VMA_AREA_VSYSCALL
 )
 
+/*
+Use cases:
+- export memory mmpas content of a process
+- list process arguments
+- list command-line arguments on the process
+- list bash history
+- list process envvar
+- search
+- showing the content of memory (from the pages image) alongside the coresponding addresses (from the pagemap image) might be useful.
+*/
+
+/*
+type MemoryAnalyzer struct {
+ 	checkpointDir string
+ 	pid           int
+  	pagesID int
+	pagemapEntries []*pagemap.PagemapEntry
+ }
+
+
+ func (mr *MemoryReader) getZeroedPage(nrPages int) ([]byte, err) {
+	if nrPages < 1 {
+		nrPages = 1
+	}
+	return bytes.Repeat([]byte("\x00"), int(pageSize * nrPages))
+ }
+
+ func (mr *MemoryReader) getPage(pageNo uint64) ([]byte, error)
+ func (mr *MemoryReader) GenerateMemoryChunk(vmaStart *uint64, size uint64) (*bytes.Buffer, error)
+
+*/
+
 // GetMemPages retrieves memory pages associated with a pid.
-func GetMemPages(dir string, pid int) ([]byte, error) {
+func GetMemPages(dir string, pid int) (*bytes.Buffer, error) {
 	mmImg, err := getImg(filepath.Join(dir, fmt.Sprintf("mm-%d.img", pid)), &mm.MmEntry{})
 	if err != nil {
 		return nil, err
@@ -37,7 +69,7 @@ func GetMemPages(dir string, pid int) ([]byte, error) {
 		buff.Write(pages)
 	}
 
-	return buff.Bytes(), nil
+	return &buff, nil
 }
 
 // generateMemoryChunk generates the memory chunk from a given VMA.

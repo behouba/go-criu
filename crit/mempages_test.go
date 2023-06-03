@@ -31,12 +31,12 @@ func TestGetMemPages(t *testing.T) {
 		}
 	}
 
-	pages, err := GetMemPages(dir, pid)
+	buff, err := GetMemPages(dir, pid)
 	if err != nil {
 		t.Errorf("GetMemPages returned an error: %v", err)
 	}
 
-	if len(pages) == 0 {
+	if len(buff.String()) == 0 {
 		t.Error("Expected non-empty pages slice")
 	}
 }
