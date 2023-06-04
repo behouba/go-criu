@@ -3,6 +3,7 @@ package crit
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -29,63 +30,17 @@ Use cases:
 - showing the content of memory (from the pages image) alongside the coresponding addresses (from the pagemap image) might be useful.
 */
 
-/*
 type MemoryAnalyzer struct {
- 	checkpointDir string
- 	pid           int
-  	pagesID int
+	checkpointDir  string
+	pid            int
+	pagesID        uint32
 	pagemapEntries []*pagemap.PagemapEntry
- }
-
-
- func (mr *MemoryReader) getZeroedPage(nrPages int) ([]byte, err) {
-	if nrPages < 1 {
-		nrPages = 1
-	}
-	return bytes.Repeat([]byte("\x00"), int(pageSize * nrPages))
- }
-
- func (mr *MemoryReader) getPage(pageNo uint64) ([]byte, error)
- func (mr *MemoryReader) GenerateMemoryChunk(vmaStart *uint64, size uint64) (*bytes.Buffer, error)
-
-*/
-
-// GetMemPages retrieves memory pages associated with a pid.
-func GetMemPages(dir string, pid int) (*bytes.Buffer, error) {
-	mmImg, err := getImg(filepath.Join(dir, fmt.Sprintf("mm-%d.img", pid)), &mm.MmEntry{})
-	if err != nil {
-		return nil, err
-	}
-
-	vmas := mmImg.Entries[0].Message.(*mm.MmEntry).GetVmas()
-
-	var buff bytes.Buffer
-	for _, vma := range vmas {
-		size := *vma.End - *vma.Start
-		pages, err := generateMemoryChunk(dir, pid, vma, size)
-		if err != nil {
-			return nil, err
-		}
-		buff.Write(pages)
-	}
-
-	return &buff, nil
+	vmas           []*vma.VmaEntry
 }
 
-// generateMemoryChunk generates the memory chunk from a given VMA.
-func generateMemoryChunk(dir string, pid int, vma *vma.VmaEntry, size uint64) ([]byte, error) {
-	if size == 0 {
-		return nil, nil
-	}
-
-	// TODO: Is this OK ? since we are in the context of container
-	if *vma.Status&vmaAreaVvar != 0 {
-		return bytes.Repeat([]byte("\x00"), int(pageSize)), nil
-	} else if *vma.Status&vmaAreaVsyscall != 0 {
-		return bytes.Repeat([]byte("\x00"), int(pageSize)), nil
-	}
-
-	pagemapImg, err := getImg(filepath.Join(dir, fmt.Sprintf("pagemap-%d.img", pid)), &pagemap.PagemapHead{})
+// NewMemoryAnalyzer creates a new MemoryAnalyzer instance with all the field populated with neccessary data
+func NewMemoryAnalyzer(checkpointDir string, pid int) (*MemoryAnalyzer, error) {
+	pagemapImg, err := getImg(filepath.Join(checkpointDir, fmt.Sprintf("pagemap-%d.img", pid)), &pagemap.PagemapHead{})
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +53,81 @@ func generateMemoryChunk(dir string, pid int, vma *vma.VmaEntry, size uint64) ([
 		pagemapEntries = append(pagemapEntries, entry.Message.(*pagemap.PagemapEntry))
 	}
 
-	pagesFile, err := os.Open(filepath.Join(dir, fmt.Sprintf("pages-%d.img", pagesID)))
+	mmImg, err := getImg(filepath.Join(checkpointDir, fmt.Sprintf("mm-%d.img", pid)), &mm.MmEntry{})
+	if err != nil {
+		return nil, err
+	}
+
+	return &MemoryAnalyzer{
+		checkpointDir:  checkpointDir,
+		pid:            pid,
+		pagesID:        pagesID,
+		pagemapEntries: pagemapEntries,
+		vmas:           mmImg.Entries[0].Message.(*mm.MmEntry).GetVmas(),
+	}, nil
+}
+
+func (ma *MemoryAnalyzer) getVmas() ([]*vma.VmaEntry, error) {
+	mmImg, err := getImg(filepath.Join(ma.checkpointDir, fmt.Sprintf("mm-%d.img", ma.pid)), &mm.MmEntry{})
+	if err != nil {
+		return nil, err
+	}
+	return mmImg.Entries[0].Message.(*mm.MmEntry).GetVmas(), nil
+
+}
+
+// GetMemPages retrieves memory pages associated with a pid.
+func GetMemPages(dir string, pid int) (*bytes.Buffer, error) {
+	analyzer, err := NewMemoryAnalyzer(dir, pid)
+	if err != nil {
+		return nil, err
+	}
+
+	var buff bytes.Buffer
+	for _, vma := range analyzer.vmas {
+		size := *vma.End - *vma.Start
+		chunk, err := analyzer.GenerateMemoryChunk(vma, size)
+		if err != nil {
+			return nil, err
+		}
+		buff.Write(chunk.Bytes())
+	}
+
+	return &buff, nil
+}
+
+func (ma *MemoryAnalyzer) getVma(addr uint64) (*vma.VmaEntry, error) {
+
+	for i, vma := range ma.vmas {
+		if *vma.Start >= addr && addr <= *vma.End {
+
+			chunk, err := ma.GenerateMemoryChunk(vma, *vma.End-*vma.Start)
+			if err != nil {
+				log.Fatal(err)
+			}
+			fmt.Println("Memory chunk: ", chunk.String())
+			return ma.vmas[i], nil
+		}
+	}
+
+	return nil, fmt.Errorf("Vma not found for address: %d", addr)
+}
+
+// GenerateMemoryChunk generates the memory chunk from a given VMA.
+func (ma *MemoryAnalyzer) GenerateMemoryChunk(vma *vma.VmaEntry, size uint64) (*bytes.Buffer, error) {
+	if size == 0 {
+		return nil, nil
+	}
+
+	var buff bytes.Buffer
+
+	// TODO: Is this OK ? since we are in the context of container
+	if *vma.Status&vmaAreaVvar != 0 || *vma.Status&vmaAreaVsyscall != 0 {
+		buff.Write(getZeroedPage(1))
+		return &buff, nil
+	}
+
+	pagesFile, err := os.Open(filepath.Join(ma.checkpointDir, fmt.Sprintf("pages-%d.img", ma.pagesID)))
 	if err != nil {
 		return nil, err
 	}
@@ -111,12 +140,10 @@ func generateMemoryChunk(dir string, pid int, vma *vma.VmaEntry, size uint64) ([
 	startPage := start / pageSize
 	endPage := end / pageSize
 
-	var buff bytes.Buffer
-
 	for pageNo := startPage; pageNo <= endPage; pageNo++ {
 		var pageData []byte
 
-		pageMem, err := getPage(dir, int(pagesID), pageNo, pagemapEntries)
+		pageMem, err := ma.getPage(pageNo)
 		if err != nil {
 			return nil, err
 		}
@@ -125,7 +152,7 @@ func generateMemoryChunk(dir string, pid int, vma *vma.VmaEntry, size uint64) ([
 			pageData = make([]byte, pageSize)
 			_, err := pagesFile.Read(pageData)
 			if err != nil {
-				pageData = bytes.Repeat([]byte("\x00"), int(pageSize))
+				continue
 			}
 		}
 
@@ -134,7 +161,7 @@ func generateMemoryChunk(dir string, pid int, vma *vma.VmaEntry, size uint64) ([
 		}
 
 		if pageMem == nil {
-			pageData = bytes.Repeat([]byte("\x00"), int(pageSize))
+			pageData = getZeroedPage(1)
 		}
 
 		var nSkip, nRead uint64
@@ -156,14 +183,14 @@ func generateMemoryChunk(dir string, pid int, vma *vma.VmaEntry, size uint64) ([
 
 		buff.Write(pageData[nSkip : nSkip+nRead])
 	}
-	return buff.Bytes(), nil
+	return &buff, nil
 }
 
-// getPage try to retrieves the page data for a given page number.
-func getPage(dir string, pagesID int, pageNo uint64, pagemapEntries []*pagemap.PagemapEntry) ([]byte, error) {
+// getPage try to retrieves the page data for a given page number from the vma.
+func (ma *MemoryAnalyzer) getPage(pageNo uint64) ([]byte, error) {
 	var off uint64 = 0
 
-	for _, m := range pagemapEntries {
+	for _, m := range ma.pagemapEntries {
 		found := false
 
 		for i := 0; i < int(*m.NrPages); i++ {
@@ -178,7 +205,7 @@ func getPage(dir string, pagesID int, pageNo uint64, pagemapEntries []*pagemap.P
 			continue
 		}
 
-		f, err := os.Open(filepath.Join(dir, fmt.Sprintf("pages-%d.img", pagesID)))
+		f, err := os.Open(filepath.Join(ma.checkpointDir, fmt.Sprintf("pages-%d.img", ma.pagesID)))
 		if err != nil {
 			return nil, err
 		}
@@ -196,7 +223,15 @@ func getPage(dir string, pagesID int, pageNo uint64, pagemapEntries []*pagemap.P
 		if err != nil {
 			return nil, err
 		}
+		// fmt.Println(buff[:16])
 		return buff, nil
 	}
 	return nil, nil
+}
+
+func getZeroedPage(nrPages int) []byte {
+	if nrPages < 1 {
+		nrPages = 1
+	}
+	return bytes.Repeat([]byte("\x00"), int(pageSize*nrPages))
 }

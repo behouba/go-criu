@@ -1,6 +1,7 @@
 package crit
 
 import (
+	"fmt"
 	"io/ioutil"
 	"regexp"
 	"strconv"
@@ -39,4 +40,15 @@ func TestGetMemPages(t *testing.T) {
 	if len(buff.String()) == 0 {
 		t.Error("Expected non-empty pages slice")
 	}
+
+	ma, err := NewMemoryAnalyzer(dir, pid)
+	if err != nil {
+		t.Error(err)
+	}
+
+	vma, err := ma.getVma(140729333638920)
+	if err != nil {
+		t.Error(err)
+	}
+	fmt.Println(vma)
 }
